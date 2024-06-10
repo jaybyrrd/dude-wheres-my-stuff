@@ -7,6 +7,11 @@ import dev.thource.runelite.dudewheresmystuff.death.DeathItems;
 import dev.thource.runelite.dudewheresmystuff.death.DeathStorageManager;
 import dev.thource.runelite.dudewheresmystuff.death.Deathbank;
 import dev.thource.runelite.dudewheresmystuff.death.Deathpile;
+import dev.thource.runelite.dudewheresmystuff.export.DataExportWriter;
+import dev.thource.runelite.dudewheresmystuff.export.DataExporter;
+import dev.thource.runelite.dudewheresmystuff.export.exporters.DefaultDataExporter;
+import dev.thource.runelite.dudewheresmystuff.export.writers.DefaultCsvWriter;
+import dev.thource.runelite.dudewheresmystuff.export.writers.GoogleSheetsWriter;
 import dev.thource.runelite.dudewheresmystuff.minigames.MinigamesStorageManager;
 import dev.thource.runelite.dudewheresmystuff.playerownedhouse.PlayerOwnedHouseStorageManager;
 import dev.thource.runelite.dudewheresmystuff.stash.StashStorageManager;
@@ -101,26 +106,36 @@ public class StorageManagerManager {
     for (StorageManager<?, ?> storageManager : storageManagers) {
       storageManager.load(profileKey);
 
-      // Bounce into swing and back into the client thread to give StoragePanels a chance to be created
+      // Bounce into swing and back into the client thread to give StoragePanels a chance to be
+      // created
       SwingUtilities.invokeLater(
-          () -> plugin.getClientThread().invoke(() -> {
-            storageManager.getStorages().forEach(storage -> {
-              if (storage.getStoragePanel() != null) {
-                storage.getStoragePanel().refreshItems();
-              }
-            });
+          () ->
+              plugin
+                  .getClientThread()
+                  .invoke(
+                      () -> {
+                        storageManager
+                            .getStorages()
+                            .forEach(
+                                storage -> {
+                                  if (storage.getStoragePanel() != null) {
+                                    storage.getStoragePanel().refreshItems();
+                                  }
+                                });
 
-            SwingUtilities.invokeLater(
-                () -> {
-                  storageManager.getStorages().forEach(storage -> {
-                    if (storage.getStoragePanel() != null) {
-                      storage.getStoragePanel().update();
-                    }
-                  });
-                  storageManager.getStorageTabPanel().reorderStoragePanels();
-                });
-          })
-      );
+                        SwingUtilities.invokeLater(
+                            () -> {
+                              storageManager
+                                  .getStorages()
+                                  .forEach(
+                                      storage -> {
+                                        if (storage.getStoragePanel() != null) {
+                                          storage.getStoragePanel().update();
+                                        }
+                                      });
+                              storageManager.getStorageTabPanel().reorderStoragePanels();
+                            });
+                      }));
     }
   }
 
@@ -191,7 +206,10 @@ public class StorageManagerManager {
   }
 
   public List<ItemStack> getItems() {
-    return getStorages().filter(Storage::isEnabled).map(Storage::getItems).flatMap(List::stream)
+    return getStorages()
+        .filter(Storage::isEnabled)
+        .map(Storage::getItems)
+        .flatMap(List::stream)
         .collect(Collectors.toList());
   }
 
@@ -201,11 +219,27 @@ public class StorageManagerManager {
 
   /** Creates a CSV file containing all the items in any exportable storage. */
   public void exportItems() {
-    DataExporter exporter = new DataExporter(displayName, this);
-    exporter.setMergeItems(plugin.getConfig().csvCombineItems());
+    List<DataExportWriter> writers =
+        List.of(
+            new GoogleSheetsWriter(
+                plugin.getConfig().googleSpreadSheetId(),
+                plugin.getConfig().googleSheetsEmail(),
+                displayName),
+            new DefaultCsvWriter(displayName));
 
+    DataExportWriter writer =
+        writers.stream()
+            .filter(x -> x.likes(plugin.getConfig().writeDestination()))
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new RuntimeException(
+                        "Could not find a writer that likes the destination selected"));
+
+    DataExporter exporter = new DefaultDataExporter(writer, this);
     try {
-      String filePath = exporter.export();
+      String filePath = exporter.export(plugin.getConfig().exportCombineItems());
+      writer.close();
       plugin.getNotifier().notify("Items successfully exported to: " + filePath, MessageType.INFO);
     } catch (IOException | IllegalArgumentException e) {
       log.error("Unable to export: " + e.getMessage());
